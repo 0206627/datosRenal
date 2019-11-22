@@ -1,0 +1,384 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Solución a partir de un algoritmo progresivo-iterativo para reemplazar datos faltantes"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Limpieza de datos"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Se parte de un archivo donde manualmente se dejan solo las columnas de los valores cuantitativos. La razón de esto es que el algoritmo para rellenar los datos faltantes sólo funciona con este tipo de datos. Los signos de interrogación se reemplazan por un valor numérico que no aparezca entre los datos. En este caso el valor -1. El archivo csv generado será el que es utilizado por el algoritmo. "
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import numpy as np\n",
+    "import pandas as pd\n",
+    "\n",
+    "\n",
+    "df = pd.read_csv(\"valores_cuantitativos.csv\")\n",
+    "\n",
+    "n = df.values.shape[1]\n",
+    "X = df.values\n",
+    "for i in range(n):\n",
+    "    idx = X[:,i]=='?'\n",
+    "    X[idx,i] = -1\n",
+    "\n",
+    "pd.DataFrame(X,columns=df.columns.values).to_csv('renal_valores_numericos.csv',index=False)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Una vez se tiene un archivo csv con solo valores numéricos, se puede proceder a correr el algoritmo de rellenado de datos.\n",
+    "Este algoritmo se basa en buscar los vecinos más próximos entre filas. Para que si alguna fila tiene valores faltantes, ésta los \n",
+    "pueda rellenar con valores de alguno de sus vecinos más próximos. "
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Algoritmo de reemplazo de datos faltantes\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "__Algunas cosas que vale la pena destacar:__\n",
+    "* Este es un algoritmo iterativo, se va a correr varias veces.\n",
+    "* En cada iteración puede hacer un progreso en el número de datos faltantes que rellena.\n",
+    "* No en todos los casos rellena todos los datos faltantes.\n",
+    "* Los vecinos más próximos se obtienen guardando la mínima distancia de Mahalanobis.\n",
+    "* Siempre guarda los 3 vecinos más próximos."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "__Fórmula de la distancia de mahalanobis:__\n",
+    "![title](mahalanobis.svg)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Al dividir los datos por su desviación estándar nos garantiza que todos los datos tendrán el mismo peso. Así podremos sacar la distancia entre filas sin preocuparnos de la diferencia de escalas que podría repercutir como un mayor o menor peso en el dato. "
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Este algoritmo va a leer del archivo csv que generamos anteriormente."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "```python\n",
+    "import numpy as np\n",
+    "import pandas as pd\n",
+    "import random\n",
+    "\n",
+    "df = pd.read_csv(\"renal_valores_numericos.csv\")\n",
+    "```"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Al hacer este algoritmo nos percatamos que en una sola iteración no rellenaba todos los datos faltantes. Esto se debe a que el vecino más proximo tambien puede tener datos faltantes en la misma columna que el dato que tratamos de rellenar. En otras palabras existen casos en los que rellenamos datos faltantes con otros datos faltantes."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "```python\n",
+    "for j in range(20): # Definimos el máximo número de iteraciones del algoritmo\n",
+    "    n = df.values.shape[1]\n",
+    "    std = np.zeros(n)\n",
+    "    for i in range(n):\n",
+    "        std[i] = np.std(df.values[:, i]) # Se obtienen las desviaciones estándar por columna\n",
+    "```"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Se eligió usar un diccionario para guardar los índices de los vecinos más cercanos y posteriormente accederlos de forma eficiente. En este diccionario se guardan los tres más cercanos. La razón de lo anterior es que el algoritmo era propenso a ciclarse, en cada iteración seguía remplazando datos faltantes por otros datos faltantes. Por lo que se decidó incluir más vecinos de los cuales eligiría aleatoriamente uno a la hora de reemplazar valores faltantes. Esto mejoró la eficacia del algoritmo enormemente."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "```python\n",
+    "    similar_rows = {} # Se crea el diccionario para los vecinos cercanos\n",
+    "    m = df.values.shape[0]\n",
+    "    for i in range(m):\n",
+    "        similar_rows[i] = ([-1, -1, -1], [999, 999, 999])\n",
+    "        for k in range(m):\n",
+    "            # Se obtiene la distancia de mahalanobis\n",
+    "            mahalanobis = np.sqrt(np.sum(((df.values[i] - df.values[k])/std)**2))\n",
+    "            index, dist = similar_rows[i]\n",
+    "\n",
+    "            if i != k and mahalanobis < dist[0]: # En caso de que \n",
+    "                dist.pop(0)                     #  sea menor que la mayor \n",
+    "                dist.append(mahalanobis)        # de los 3 vecinos se\n",
+    "                index.pop(0)                    # reemplaza\n",
+    "                index.append(k)\n",
+    "                similar_rows[i] = (index, dist)\n",
+    "```"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Una vez que se tienen los vecinos más proximos, se itera por la matriz de datos buscando los datos faltantes. Los datos faltantes están denotados por el valor -1. Este se eligió porque ninguno de los datos arrojaba datos negativos. También se imprime en cada iteración, cuántos datos faltan por rellenar para así ver el progreso del algoritmo."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "```python\n",
+    "    X = df.values\n",
+    "\n",
+    "    for i in range(m):\n",
+    "        for k in range(n):\n",
+    "            if X[i,k] == -1: # Se buscan los valores faltantes denotados por un -1\n",
+    "                index, dist = similar_rows[i]\n",
+    "                # Se elige aleatoriamente uno de los tres vecinos más próximos\n",
+    "                X[i,k] = X[index[random.randint(0,2)],k] \n",
+    "\n",
+    "    # Se imprime la iteración en la que va el algoritmo y cuántos datos faltantes quedan por reemplazar\n",
+    "    print(\"Barrido no. {} , datos por completar: {}\".format(j+1, np.count_nonzero(X==-1)))\n",
+    "    # Se hace una nuevo csv\n",
+    "    df = pd.DataFrame(X,columns=df.columns.values)\n",
+    "    name = 'datos_rellenos/renal_iteration_{}_no_faltantes_{}.csv'.format(j+1, np.count_nonzero(X==-1))\n",
+    "    pd.DataFrame(X,columns=df.columns.values).to_csv(name,index=False)\n",
+    "```"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Por cada iteracion o barrido el algoritmo genera un archivo csv con los nuevos datos. Esto con la inteción de visualizar el progreso y determinar si es conveniente que a todas las filas se les reemplace los datos faltantes. En algunos casos, la fila en su mayoria eran datos faltantes por lo que, en ese caso, queda a criterio si se descarta o se le infieren valores. "
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import numpy as np\n",
+    "import pandas as pd\n",
+    "import random\n",
+    "\n",
+    "df = pd.read_csv(\"renal_valores_numericos.csv\")\n",
+    "\n",
+    "for j in range(20): # Definimos el maximo numero de iteraciones del algoritmo\n",
+    "    n = df.values.shape[1]\n",
+    "    std = np.zeros(n)\n",
+    "    for i in range(n):\n",
+    "        std[i] = np.std(df.values[:, i]) # Se optienen las desviaciones estandar por columna\n",
+    "\n",
+    "    similar_rows = {} # Se crea el diccionario para los vecinos cercanos\n",
+    "    m = df.values.shape[0]\n",
+    "    for i in range(m):\n",
+    "        similar_rows[i] = ([-1, -1, -1], [999, 999, 999])\n",
+    "        for k in range(m):\n",
+    "            # Se obtiene la distancia de mahalanobis\n",
+    "            mahalanobis = np.sqrt(np.sum(((df.values[i] - df.values[k])/std)**2))\n",
+    "            index, dist = similar_rows[i]\n",
+    "\n",
+    "            if i != k and mahalanobis < dist[0]: # En caso de que \n",
+    "                dist.pop(0)                     #  sea menor que la mayor \n",
+    "                dist.append(mahalanobis)        # de los 3 vecinos se\n",
+    "                index.pop(0)                    # reemplaza\n",
+    "                index.append(k)\n",
+    "                similar_rows[i] = (index, dist)\n",
+    "\n",
+    "    X = df.values\n",
+    "\n",
+    "    for i in range(m):\n",
+    "        for k in range(n):\n",
+    "            if X[i,k] == -1: # Se buscan los valores faltantes denotados por un 0\n",
+    "                index, dist = similar_rows[i]\n",
+    "                # Se elige aleatoriamente uno de los tres vecinos más próximos\n",
+    "                X[i,k] = X[index[random.randint(0,2)],k] \n",
+    "\n",
+    "    # Se imprime la iteración en la que va el algoritmo y cuántos datos faltantes quedan por reemplazar\n",
+    "    print(\"Barrido no. {} , datos por completar: {}\".format(j+1, np.count_nonzero(X==-1)))\n",
+    "    # Se hace un nuevo csv\n",
+    "    df = pd.DataFrame(X,columns=df.columns.values)\n",
+    "    name = 'datos_rellenos/renal_iteration_{}_no_faltantes_{}.csv'.format(j+1, np.count_nonzero(X==-1))\n",
+    "    pd.DataFrame(X,columns=df.columns.values).to_csv(name,index=False)\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Como se puede ver en la iteración 17 ya se reemplazaron todos los datos faltantes. Las iteraciones extra es para los casos en que el progreso es más lento. Después se va a proceder a seleccionar un archivo con los datos completos para pasarlo a nuestro modelo. Se hicieron varias pruebas con este algoritmo y se dejó de evidencia archivos csv de las 3 más relevantes. Lo interesante fue que en muy raros casos no se reemplazaban todos los datos faltantes. "
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Modelo de predicción (clasificador)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import pandas\n",
+    "import numpy as np"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Se eligió un Random Forest Classifier para obtener el mejor resultado de un grupo aleatorio de muestras de nuestro modelo.\n",
+    "Se entrena con 65% de los datos y se prueba con el 35%. El numero de estimadores es 100, por lo que de 100 árboles de decisión elegirá el mejor.  "
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "accuracy 0.9857142857142858\n",
+      "f1_score 0.9848189112990675\n"
+     ]
+    }
+   ],
+   "source": [
+    "from sklearn.ensemble import RandomForestClassifier\n",
+    "from sklearn.model_selection import train_test_split\n",
+    "from sklearn.metrics import accuracy_score,f1_score\n",
+    "from sklearn.tree import export_graphviz\n",
+    "\n",
+    "df = pandas.read_csv('renal_relleno.csv')\n",
+    "X = df.values[:,:-1]\n",
+    "Y = df.values[:,-1]\n",
+    "features = df.columns.values[:-1]\n",
+    "Xtrain, Xtest, Ytrain, Ytest = train_test_split(X, Y, test_size=0.35)\n",
+    "model = RandomForestClassifier(n_estimators=100)\n",
+    "model.fit(Xtrain,Ytrain)\n",
+    "Yc = model.predict(Xtest)\n",
+    "print( 'accuracy',accuracy_score(Ytest,Yc))\n",
+    "print( 'f1_score',f1_score(Ytest,Yc,average='macro'))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "A continuación se muestra el peso que tienen nuestras variables a la hora de predecir un problema renal.  "
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "age 0.012807834404066527\n",
+      "bp 0.011868870694422537\n",
+      "sg 0.15223080302833686\n",
+      "al 0.07940405039778425\n",
+      "su 0.007931799534295975\n",
+      "bgr 0.037666210602540204\n",
+      "bu 0.027826578216196086\n",
+      "sc 0.12976850866592884\n",
+      "sod 0.017428897770875123\n",
+      "pot 0.006564421932335145\n",
+      "hemo 0.2203335178728242\n",
+      "pcv 0.17129701069332234\n",
+      "wc 0.00618490385613435\n",
+      "rc 0.11868659233093755\n"
+     ]
+    }
+   ],
+   "source": [
+    "for i,var in enumerate(features):\n",
+    "    print(var, model.feature_importances_[i])"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Conclusiones"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Comprobamos que el algoritmo que utilizamos en este caso para reemplazar los datos faltantes es muy eficaz porque concuerda con la realidad. Prueba de esto es que, en los pacientes sanos, a ninguno de los que tenían datos faltantes, se le reemplazó el dato de la albúmina por uno distinto de cero, ya que al tener presencia de albúmina en la orina era señal tajante de padecer un problema renal. Si se hubiera dado ese caso, habría incongruencias en el modelo. Por lo que concluimos que nuestro modelo predice con certeza."
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.7.3"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 2
+}
